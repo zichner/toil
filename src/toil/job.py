@@ -537,6 +537,10 @@ class Job(object):
                 worker.start()
             self.inputBlockFn = inputBlockFn
 
+        @contextmanager
+        def open(self,job):
+            yield
+
         def getLocalTempDir(self):
             """
             Get a new local temporary directory in which to write files that persist \
@@ -892,6 +896,16 @@ class Job(object):
             self.jobSpecificFiles = {}
             self.nlinkThreshold = 1
             self._setupCache()
+
+        @contextmanager
+        def open(self,job):
+            # Cleanup the cache to free up enough space for this job (if needed)
+            jobReqs = job.effectiveRequirements(self.jobStore.config)
+            self.cleanCache(jobReqs.disk)
+            try:
+                yield
+            finally:
+                self.returnJobReqs(jobReqs.disk)
 
         # Overridden FileStore methods
         def writeGlobalFile(self, localFileName, cleanup=False):
