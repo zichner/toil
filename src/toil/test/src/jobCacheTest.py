@@ -35,31 +35,31 @@ class jobCacheTest(ToilTest):
     # sanity
     def test_toil_isnt_broken(self):
         '''
-        Make a job, make a child, make merry.
-        '''
+    Make a job, make a child, make merry.
+    '''
         F = Job.wrapJobFn(_uselessFunc)
         G = Job.wrapJobFn(_uselessFunc)
         H = Job.wrapJobFn(_uselessFunc)
         I = Job.wrapJobFn(_uselessFunc)
-        F.addChild(G)
-        F.addChild(H)
-        G.addChild(I)
-        H.addChild(I)
+    F.addChild(G)
+    F.addChild(H)
+    G.addChild(I)
+    H.addChild(I)
         Job.Runner.startToil(F, self.params)
 
     # Cache
     def testCacheLockRace(self):
-        '''
+    '''
         Make 2 threads compete for the same cache lock file.
-        :return:
-        '''
+    :return:
+    '''
         E = Job.wrapJobFn(_setUpLockFile)
         F = Job.wrapJobFn(_mth, cores=1)
         G = Job.wrapJobFn(_mth, cores=1)
         H = Job.wrapJobFn(_mth, cores=1)
-        E.addChild(F)
-        E.addChild(G)
-        E.addChild(H)
+    E.addChild(F)
+    E.addChild(G)
+    E.addChild(H)
         Job.Runner.startToil(E, self.params)
         with open(os.path.join(self.params.workDir, 'cache/.cacheLock'), 'r') as x:
             values = unpack('iddd', x.read())
@@ -68,10 +68,10 @@ class jobCacheTest(ToilTest):
 
     # writeGlobalFile tests
     def testWriteNonLocalFileToJobStore(self):
-        '''
+    '''
         Write a file not in localTempDir to the job store. Ensure the file is not
-        cached.
-        '''
+    cached.
+    '''
         workdir = self._createTempDir(purpose='writeTestDir')
         currwd = os.path.abspath('.')
         os.chdir(workdir)
@@ -80,89 +80,89 @@ class jobCacheTest(ToilTest):
         os.chdir(currwd)
 
     def testWriteLocalFileToJobStore(self):
-        '''
+    '''
         Write a file not in localTempDir to the job store. Ensure the file is not
         cached.
-        '''
+    '''
         F = Job.wrapJobFn(_writeToFileStore, isLocalFile=True)
         Job.Runner.startToil(F, self.params)
 
-    # readGlobalFile tests
+# readGlobalFile tests
     def testReadUncachedFileFromJobStore1(self):
-        '''
+    '''
         Read a file from the file store that does not have a corresponding cached copy. Do not cache
         the read file. Ensure the number of links on the file are appropriate.
-        '''
+    '''
         F = Job.wrapJobFn(_writeToFileStore, isLocalFile=False)
         G = Job.wrapJobFn(_readFromJobStore, isCachedFile=False, cacheReadFile=False, fsID=F.rv())
-        F.addChild(G)
+    F.addChild(G)
         Job.Runner.startToil(F, self.params)
 
     def testReadUncachedFileFromJobStore2(self):
-        '''
+    '''
         Read a file from the file store that does not have a corresponding cached copy. Cache the
         read file. Ensure the number of links on the file are appropriate.
-        '''
+    '''
         F = Job.wrapJobFn(_writeToFileStore, isLocalFile=False)
         G = Job.wrapJobFn(_readFromJobStore, isCachedFile=False, cacheReadFile=True, fsID=F.rv())
-        F.addChild(G)
+    F.addChild(G)
         Job.Runner.startToil(F, self.params)
 
     def testReadCachedFileFromJobStore(self):
-        '''
+    '''
         Read a file from the file store that has a corresponding cached copy. Ensure the number of
         links on the file are appropriate.
-        '''
+    '''
         F = Job.wrapJobFn(_writeToFileStore, isLocalFile=True)
         G = Job.wrapJobFn(_readFromJobStore, isCachedFile=True, cacheReadFile=None, fsID=F.rv())
-        F.addChild(G)
+    F.addChild(G)
         Job.Runner.startToil(F, self.params)
 
     def testMultipleJobsReadSameCachedGlobalFile(self):
-        '''
+    '''
         Write a local file to the job store (hence adding a copy to cache), then have 10 jobs read
         it. Assert cached file size in the cache lock file never goes up, assert sigma job reqs is
         always (a multiple of job reqs) - (number of files linked to the cachedfile * filesize). At
         the end, assert the cache lock file shows sigma job = 0.
-        :return:
-        '''
+    :return:
+    '''
         temp_dir = self._createTempDir(purpose='tempWrite')
         with open(os.path.join(temp_dir, 'test'), 'w') as x:
             x.write(str(0))
         F = Job.wrapJobFn(_writeToFileStore, isLocalFile=True, isTest=False, fileMB=200)
         G = Job.wrapJobFn(_probeJobReqs, diskMB=100, disk='100M')
-        jobs = {}
+    jobs = {}
         for i in xrange(0,10):
             jobs[i] = Job.wrapJobFn(_multipleReader, diskMB=200, fileInfo=F.rv(),
                                     maxWriteFile=os.path.abspath(x.name), disk='200M', memory='10M',
                                     cores=1)
-            F.addChild(jobs[i])
-            jobs[i].addChild(G)
+        F.addChild(jobs[i])
+        jobs[i].addChild(G)
         Job.Runner.startToil(F, self.params)
         with open(x.name, 'r') as y:
             assert int(y.read()) > 2
 
 
     def testMultipleJobsReadSameUnachedGlobalFile(self):
-        '''
+    '''
         Write a non-local file to the job store(hence no cached copy), then have 10 jobs read it.
         Assert cached file size in the cache lock file never goes up, assert sigma job reqs is
         always (a multiple of job reqs) - (number of files linked to the cachedfile * filesize). At
         the end, assert the cache lock file shows sigma job = 0.
-        :return:
-        '''
+    :return:
+    '''
         temp_dir = self._createTempDir(purpose='tempWrite')
         with open(os.path.join(temp_dir, 'test'), 'w') as x:
             x.write(str(0))
         F = Job.wrapJobFn(_writeToFileStore, isLocalFile=False, isTest=False, fileMB=1024)
         G = Job.wrapJobFn(_probeJobReqs, diskMB=100, disk='100M')
-        jobs = {}
-        for i in xrange(0,10):
+    jobs = {}
+    for i in xrange(0,10):
             jobs[i] = Job.wrapJobFn(_multipleReader, diskMB=1024, fileInfo=F.rv(),
                                     maxWriteFile=os.path.abspath(x.name), disk='2G', memory='10M',
                                     cores=1)
-            F.addChild(jobs[i])
-            jobs[i].addChild(G)
+        F.addChild(jobs[i])
+        jobs[i].addChild(G)
         Job.Runner.startToil(F, self.params)
 
 
@@ -188,14 +188,14 @@ def _writeToFileStore(job, isLocalFile, isTest=True, fileMB=1):
 
     if isTest:
         if isLocalFile:
-            # Since the file has been hard linked it should have
-            # nlink_count = threshold +1 (local, cached, and possibly filestore)
-            x = job.fileStore.nlinkThreshold + 1
+        # Since the file has been hard linked it should have
+        # nlink_count = threshold +1 (local, cached, and possibly filestore)
+        x = job.fileStore.nlinkThreshold + 1
             assert os.stat(testfile.name).st_nlink == x, 'Should have %s ' % x + 'nlinks. Got ' + \
                 '%s' % os.stat(testfile.name).st_nlink
-        else:
-            # Since the file hasn't been hard linked it should have
-            # nlink_count = 1
+    else:
+        # Since the file hasn't been hard linked it should have
+        # nlink_count = 1
             assert os.stat(testfile.name).st_nlink == 1, 'Should have 1 nlink. Got ' + \
                 '%s' % os.stat(testfile.name).st_nlink
         return fsID
@@ -228,7 +228,7 @@ def _readFromJobStore(job, isCachedFile, cacheReadFile, fsID, isTest=True):
             expectedNlinks = x
     if isTest:
         assert os.stat(outfile).st_nlink == expectedNlinks, 'Should have %s ' % expectedNlinks + \
-            'nlinks. Got %s.' % os.stat(outfile).st_nlink
+                ' nlinks. Got %s.' % os.stat(outfile).st_nlink
         return None
     else:
         return outfile
@@ -272,10 +272,10 @@ def _multipleReader(job, diskMB, fileInfo, maxWriteFile):
             x.truncate()
             x.write(str(max(prev_max, fileNlinks)))
         cacheInfo = job.fileStore.CacheStats.load(lockFileHandle)
-        if cacheInfo.nlink == 2:
-            assert cacheInfo.cached == 0.0 # since fileJobstore on same filesystem
-        else:
-            assert cacheInfo.cached == fileSize
+            if cacheInfo.nlink == 2:
+                assert cacheInfo.cached == 0.0 # since fileJobstore on same filesystem
+            else:
+                assert cacheInfo.cached == fileSize
         assert ((cacheInfo.sigmaJob + (fileNlinks - cacheInfo.nlink) * fileSize) %
                 twohundredmb) == 0.0
 
