@@ -28,7 +28,7 @@ from toil.lib.bioio import getLogLevelString
 from toil.batchSystems.mesos.test import MesosTestSupport
 from toil.test.sort.lib import merge, sort, copySubRangeOfFile, getMidPoint
 from toil.test.sort.sort import setup, sortMemory
-from toil.test import ToilTest, needs_aws, needs_mesos, needs_azure, needs_parasol, needs_gridengine
+from toil.test import ToilTest, needs_aws, needs_mesos, needs_azure, needs_parasol, needs_gridengine, needs_ceph
 from toil.jobStores.abstractJobStore import JobStoreCreationException
 from toil.leader import FailedJobsException
 
@@ -185,7 +185,21 @@ class SortTest(ToilTest, MesosTestSupport, ParasolTestSupport):
             self._toilSort(jobStore=self._azureJobStore(), batchSystem="mesos")
         finally:
             self._stopMesos()
-            
+
+    @needs_ceph
+    def testCephSingle(self):
+        self._toilSort(jobStore=self._cephJobStore(), batchSystem='singleMachine')
+
+    @needs_ceph
+    @needs_mesos
+    def testCephMesos(self):
+        self._startMesos()
+        self._startMesos()
+        try:
+            self._toilSort(jobStore=self._cephJobStore(), batchSystem="mesos")
+        finally:
+            self._stopMesos()
+
     def testFileSingle(self):
         self._toilSort(jobStore=self._getTestJobStorePath(), batchSystem='singleMachine')
 
@@ -278,6 +292,9 @@ class SortTest(ToilTest, MesosTestSupport, ParasolTestSupport):
 
     def _azureJobStore(self):
         return "azure:toiltest:sort-test-%s" % uuid4()
+
+    def _cephJobStore(self):
+        return "ceph:toil-test-%s" % uuid4()
 
     def _loadFile(self, path):
         with open(path, 'r') as f:

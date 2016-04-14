@@ -115,11 +115,13 @@ class CephJobStore(AbstractJobStore):
         return self.bucket.new_key(jobStoreID).exists()
 
     def getPublicUrl(self, fileName):
-        key = self.bucket.get_key(key_name=fileName)
-        return key.generate_url(expires_in=self.publicUrlExpiration.total_seconds())
+        key = self.bucket.get_key(key_name=fileName, validate=True)
+        if key is None:
+            raise NoSuchFileException(fileName)
+        return key.generate_url(expires_in=self.publicUrlExpiration.total_seconds(), query_auth=True, force_http=True)
 
     def getSharedPublicUrl(self, sharedFileName):
-        self.getPublicUrl(sharedFileName)
+        return self.getPublicUrl(sharedFileName)
 
     def load(self, jobStoreID):
         key = self.bucket.get_key(jobStoreID, validate=True)
@@ -221,8 +223,7 @@ class CephJobStore(AbstractJobStore):
 
     def readStatsAndLogging(self, callback, readAll=False):
         read = 0
-        statsKeys = list(self.bucket.list(prefix=self.statsPrefix))
-        for key in statsKeys:
+        for key in self.bucket.list(prefix=self.statsPrefix):
             contents = self._readFile(key.name)
             callback(StringIO(contents))
             read += 1

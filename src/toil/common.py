@@ -505,6 +505,10 @@ class Toil(object):
             account, namePrefix = jobStoreArgs.split(':', 1)
             return AzureJobStore(account, namePrefix, config=config)
 
+        elif jobStoreName == 'ceph':
+            from toil.jobStores.cephJobStore import CephJobStore
+            return CephJobStore(jobStoreArgs, config=config)
+
         else:
             raise RuntimeError("Unknown job store implementation '%s'" % jobStoreName)
 
