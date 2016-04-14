@@ -42,7 +42,7 @@ from toil.jobStores.abstractJobStore import (AbstractJobStore, NoSuchJobExceptio
 from bd2k.util.objects import abstractstaticmethod, abstractclassmethod
 from toil.jobStores.fileJobStore import FileJobStore
 from toil.lib import encryption
-from toil.test import ToilTest, needs_aws, needs_azure, needs_encryption, make_tests
+from toil.test import ToilTest, needs_aws, needs_azure, needs_encryption, needs_ceph, make_tests
 logger = logging.getLogger(__name__)
 
 
@@ -829,6 +829,45 @@ class AzureJobStoreTest(hidden.AbstractJobStoreTest):
         blobService, containerName, _ = AzureJobStore._extractBlobInfoFromUrl(urlparse.urlparse(url))
         blobService.delete_container(containerName)
 
+@needs_ceph
+class CephJobStoreTest(hidden.AbstractJobStoreTest):
+
+    def _createJobStore(self, config=None):
+        from toil.jobStores.cephJobStore import CephJobStore
+        return CephJobStore(self.namePrefix, config=config)
+
+    @classmethod
+    def _getUrlForTestFile(cls, size=None):
+        """
+        Creates a test file of the specified size and returns a URL pointing to the file and an md5
+        hash of the contents of the file. If a size is not specified the file is not created but a
+        URL pointing to a non existent file is returned.
+
+        :param int size: The size of the test entity to be created.
+        :return: Either (URL, md5 hash string) or URL
+        """
+        raise NotImplementedError()
+
+    @staticmethod
+    def _hashUrl(url):
+        """
+        Returns md5 hash of the contents of the file pointed at by URL.
+        """
+        raise NotImplementedError()
+
+    def _hashJobStoreFileID(self, jobStoreFileID):
+        """
+        Returns md5 hash of file contents.
+        """
+        raise NotImplementedError()
+
+    @staticmethod
+    def _createExternalStore():
+        raise NotImplementedError()
+
+    @staticmethod
+    def _cleanUpExternalStore(url):
+        raise NotImplementedError()
 
 class EncryptedFileJobStoreTest(FileJobStoreTest, hidden.AbstractEncryptedJobStoreTest):
     pass

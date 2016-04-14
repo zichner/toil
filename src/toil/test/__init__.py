@@ -176,6 +176,28 @@ def needs_azure(test_item):
                                  "'toiltest' storage account." % credential_file_path)(test_item)
         return test_item
 
+def needs_ceph(test_item):
+    """
+    Use as a decorator before test classes or methods to only run them if Ceph is usable.
+    """
+    try:
+        # noinspection PyUnresolvedReferences
+        import boto
+    except ImportError:
+        return unittest.skip("Skipping test. Install toil with the 'aws' extra to include this "
+                             "test.")(test_item)
+    except:
+        raise
+    else:
+        dot_boto_path = os.path.expanduser('~/.boto')
+        if os.path.exists(dot_boto_path):
+            with open(dot_boto_path, 'rb') as f:
+                boto_contents = f.read()
+            if 'ceph' in boto_contents:
+                return test_item
+
+        return unittest.skip("Skipping test. Create ~/.boto or ~/.aws/credentials to include "
+                             "this test.")(test_item)
 
 def needs_gridengine(test_item):
     """
