@@ -70,7 +70,8 @@ def getJobStoreClasses():
     jobStoreClassNames = (
         "toil.jobStores.azureJobStore.AzureJobStore",
         "toil.jobStores.fileJobStore.FileJobStore",
-        "toil.jobStores.aws.jobStore.AWSJobStore"
+        "toil.jobStores.aws.jobStore.AWSJobStore",
+        "toil.jobStore.cephJobStore.CephJobStore"
     )
 
     jobStoreClasses = []

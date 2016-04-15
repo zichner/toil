@@ -16,16 +16,11 @@ import os
 import uuid
 from StringIO import StringIO
 from bd2k.util.threading import ExceptionalThread
-from boto.exception import S3ResponseError as CephResponseError, S3ResponseError
+from boto.exception import S3ResponseError
 import boto.s3
-from boto.s3.bucket import Bucket
-from boto.s3.connection import S3Connection
 import cPickle
-import itertools
 
-from toil.job import JobException
 from toil.jobStores.abstractJobStore import (AbstractJobStore, NoSuchJobException,
-                                             ConcurrentFileModificationException,
                                              NoSuchFileException)
 from toil.jobWrapper import JobWrapper
 
@@ -45,8 +40,11 @@ class CephJobStore(AbstractJobStore):
 
         try:
             self.bucket = self.ceph.get_bucket(self.bucketName, validate=True)
-        except:
-            exists = False
+        except S3ResponseError as e:
+            if e.status == 404:
+                exists = False
+            else:
+                raise e
 
         create = config is not None
         self._checkJobStoreCreation(create, exists, namePrefix)
@@ -59,20 +57,30 @@ class CephJobStore(AbstractJobStore):
         self.statsPrefix = '265f64b4-365c-4bde-a349-5912a0634174'
         self.readStatsPrefix = '_'+self.statsPrefix
 
-    def _connectCeph(self):
+    @staticmethod
+    def _getBucketAndKey(url):
+        bucketAndKey = url.path
+        return tuple(bucketAndKey.split(':',1))
+
+    @staticmethod
+    def _connectCeph():
         return boto.connect_s3()
 
     @classmethod
     def _readFromUrl(cls, url, writable):
-        raise NotImplementedError()
+        bucket, key = cls._getBucketAndKey(url)
+        ceph = cls._connectCeph()
+        ceph.get_bucket(bucket, validate=True).get_key(key,validate=True).get_contents_to_file(writable)
 
     @classmethod
     def _writeToUrl(cls, readable, url):
-        raise NotImplementedError()
+        bucket, key = cls._getBucketAndKey(url)
+        ceph = cls._connectCeph()
+        ceph.get_bucket(bucket, validate=True).get_key(key, validate=True).set_contents_from_string(readable.read())
 
     @classmethod
     def _supportsUrl(cls, url):
-        raise NotImplementedError()
+        return url.scheme.lower() == 'ceph'
 
     def deleteJobStore(self):
         for item in self.bucket.list():
@@ -223,7 +231,7 @@ class CephJobStore(AbstractJobStore):
 
     def readStatsAndLogging(self, callback, readAll=False):
         read = 0
-        for key in self.bucket.list(prefix=self.statsPrefix):
+        for key in self.bucket.list(prefix=self.statsPrefix): # exception thrown here
             contents = self._readFile(key.name)
             callback(StringIO(contents))
             read += 1

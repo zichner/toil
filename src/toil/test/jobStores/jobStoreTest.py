@@ -838,36 +838,72 @@ class CephJobStoreTest(hidden.AbstractJobStoreTest):
 
     @classmethod
     def _getUrlForTestFile(cls, size=None):
-        """
-        Creates a test file of the specified size and returns a URL pointing to the file and an md5
-        hash of the contents of the file. If a size is not specified the file is not created but a
-        URL pointing to a non existent file is returned.
+        fileName = 'testfile_%s' % uuid.uuid4()
+        bucket = cls._externalStore()
+        url = 'ceph://%s/%s' % (bucket.name, fileName)
+        if size is None:
+            return url
+        with open('/dev/urandom', 'r') as readable:
+            if size < cls.mpTestPartSize:
+                bucket.new_key(fileName).set_contents_from_string(readable.read(size))
+            else:
+                mp = bucket.initiate_multipart_upload(key_name=fileName)
+                start = 0
+                partNum = itertools.count()
+                partSize =cls.mpTestPartSize
+                try:
+                    while start < size:
+                        end = min(start + partSize, size)
+                        part = io.BytesIO(readable.read(partSize))
+                        mp.upload_part_from_file(fp=part,
+                                                 part_num=next(partNum) + 1,
+                                                 size=end - start)
+                        start = end
+                        if start == size:
+                            break
 
-        :param int size: The size of the test entity to be created.
-        :return: Either (URL, md5 hash string) or URL
-        """
-        raise NotImplementedError()
+                    assert start == size
+                except:
+                    mp.cancel_upload()
+                    raise
+                else:
+                    mp.complete_upload()
+        return url, hashlib.md5(bucket.get_key(fileName).get_contents_as_string()).hexdigest()
 
     @staticmethod
     def _hashUrl(url):
-        """
-        Returns md5 hash of the contents of the file pointed at by URL.
-        """
-        raise NotImplementedError()
+        from toil.jobStores.cephJobStore import CephJobStore
+        bucket, key = CephJobStore._getBucketAndKey(urlparse.urlparse(url))
+        ceph = CephJobStore._connectCeph()
+        # etag gets return in the form '"xxxxxxxx"' so we have to strip the extra quotes..
+        return ceph.get_bucket(bucket, validate=True).get_key(key, validate=True).etag[1:-1]
 
     def _hashJobStoreFileID(self, jobStoreFileID):
         """
         Returns md5 hash of file contents.
         """
-        raise NotImplementedError()
+        # etag gets return in the form '"xxxxxxxx"' so we have to strip the extra quotes..
+        return self.master.bucket.get_key(jobStoreFileID, validate=True).etag[1:-1]
 
     @staticmethod
     def _createExternalStore():
-        raise NotImplementedError()
+        from toil.jobStores.cephJobStore import CephJobStore
+        ceph = CephJobStore._connectCeph()
+        ceph.create_bucket('import_export_test_%s' % (uuid.uuid4()))
+        return
 
     @staticmethod
     def _cleanUpExternalStore(url):
-        raise NotImplementedError()
+        from toil.jobStores.cephJobStore import CephJobStore
+        try:
+            bucket, _ = CephJobStore._getBucketAndKey(urlparse.urlparse(url))
+        except boto.exception.S3ResponseError as ex:
+            assert ex.error_code == 404
+        else:
+            ceph = CephJobStore._connectCeph()
+            for key in bucket.list():
+                key.delete()
+            ceph.delete_bucket(bucket)
 
 class EncryptedFileJobStoreTest(FileJobStoreTest, hidden.AbstractEncryptedJobStoreTest):
     pass
