@@ -99,10 +99,9 @@ class AWSJobStore(AbstractJobStore):
     partitioned into chunks of 1024 bytes and each chunk is stored as a an attribute of the SDB
     item representing the job. UUIDs are used to identify jobs and files.
     """
-
     @classmethod
-    def loadOrCreateJobStore(cls, jobStoreString, config=None, **kwargs):
-        region, namePrefix = jobStoreString.split(':')
+    def _parseJobStoreString(cls, jobStoreStr):
+        region, namePrefix = jobStoreStr.split(':')
         if not cls.bucketNameRe.match(namePrefix):
             raise ValueError("Invalid name prefix '%s'. Name prefixes must contain only digits, "
                              "hyphens or lower-case letters and must not start or end in a "
@@ -114,7 +113,80 @@ class AWSJobStore(AbstractJobStore):
         if '--' in namePrefix:
             raise ValueError("Invalid name prefix '%s'. Name prefixes may not contain "
                              "%s." % (namePrefix, cls.nameSeparator))
-        return cls(region, namePrefix, config=config, **kwargs)
+        return region, namePrefix
+
+    @classmethod
+    def loadOrCreateJobStore(cls, jobStoreStr, config=None, **kwargs):
+        if config is None:
+            return cls.loadJobStore(jobStoreStr, **kwargs)
+        else:
+            return cls.createJobStore(jobStoreStr, config, **kwargs)
+
+    @classmethod
+    def createJobStore(cls, jobStoreStr, config, **kwargs):
+        region, namePrefix = cls._parseJobStoreString(jobStoreStr)
+
+        jobsDomain = cls._createDomain(cls._qualify(namePrefix, 'jobs'), region=region)
+        filesDomain = cls._createDomain(cls._qualify(namePrefix, 'files'), region=region)
+        filesBucket = cls._createBucket(cls._qualify(namePrefix, 'files'), region=region, versioning=True)
+
+        cls._checkJobStoreCreation(create=True,
+                                   exists=cls.checkRegistry(region, namePrefix),
+                                   jobStoreString=region + ":" + namePrefix)
+
+        jobStore = cls(region, namePrefix, filesBucket, filesDomain, jobsDomain, config, **kwargs)
+        super(cls, jobStore).createJobStore(jobStore, config)
+        jobStore.sseKeyPath = jobStore.config.sseKey
+        return jobStore
+
+    @classmethod
+    def loadJobStore(cls, jobStoreStr, **kwargs):
+        region, namePrefix = cls._parseJobStoreString(jobStoreStr)
+
+        jobsDomain = cls._loadDomain(cls._qualify(namePrefix, 'jobs'), region=region)
+        filesDomain = cls._loadDomain(cls._qualify(namePrefix, 'files'), region=region)
+        filesBucket = cls._loadBucket(cls._qualify(namePrefix, 'files'), region=region, versioning=True)
+
+        cls._checkJobStoreCreation(create=False,
+                                   exists=cls.checkRegistry(region, namePrefix),
+                                   jobStoreString=region + ":" + namePrefix)
+
+        jobStore = cls(region, namePrefix, filesBucket, filesDomain, jobsDomain, config=None, **kwargs)
+        super(cls, jobStore).loadJobStore(jobStore)
+        jobStore.sseKeyPath = jobStore.config.sseKey
+        return jobStore
+
+    @classmethod
+    def cleanJobStore(cls, jobStoreStr, **kwargs):
+        region, namePrefix = cls._parseJobStoreString(jobStoreStr)
+        jobStore = cls(region, namePrefix, None, None, None, config=None, **kwargs)
+        jobStore.updateRegistry(exists=False)
+
+        for domainName in ('jobs', 'files'):
+            try:
+                domain = cls._loadDomain(cls._qualify(namePrefix, domainName), region=region)
+            except SDBResponseError as e:
+                if not no_such_domain(e):
+                    raise
+            else:
+                if domain is not None:
+                    domain.delete()
+
+        try:
+            filesBucket = cls._loadBucket(cls._qualify(namePrefix, 'files'), region=region, versioning=True)
+        except S3ResponseError as e:
+            if e.error_code != 'NoSuchBucket':
+                raise
+        else:
+            for upload in filesBucket.list_multipart_uploads():
+                upload.cancel_upload()
+            if cls.__getBucketVersioning(filesBucket) in (True, None):
+                for key in list(filesBucket.list_versions()):
+                    filesBucket.delete_key(key.name, version_id=key.version_id)
+            else:
+                for key in list(filesBucket.list()):
+                    key.delete()
+            filesBucket.delete()
 
     # Dots in bucket names should be avoided because bucket names are used in HTTPS bucket
     # URLs where the may interfere with the certificate common name. We use a double
@@ -131,7 +203,7 @@ class AWSJobStore(AbstractJobStore):
 
     # Do not invoke the constructor, use the factory method above.
 
-    def __init__(self, region, namePrefix, config=None, partSize=defaultPartSize):
+    def __init__(self, region, namePrefix, filesBucket, filesDomain, jobsDomain, config=None, partSize=defaultPartSize):
         """
         Create a new job store in AWS or load an existing one from there.
 
@@ -142,46 +214,20 @@ class AWSJobStore(AbstractJobStore):
         :param config: the config object to written to this job store. Must be None for existing
         job stores. Must not be None for new job stores.
         """
-        log.debug("Instantiating %s for region %s and name prefix '%s'",
-                  self.__class__, region, namePrefix)
+        log.debug("Instantiating %s for region %s and name prefix '%s'", self.__class__, region, namePrefix)
         self.region = region
         self.namePrefix = namePrefix
-        self.jobsDomain = None
-        self.filesDomain = None
-        self.filesBucket = None
-        self.db = self._connectSimpleDB()
-        self.s3 = self._connectS3()
+
+        self.filesBucket = filesBucket
+        self.filesDomain = filesDomain
+        self.jobsDomain = jobsDomain
         self.partSize = partSize
 
-        # Check global registry domain for existence of this job store. The first time this is
-        # being executed in an AWS account, the registry domain will be created on the fly.
-        create = config is not None
-        self.registry_domain = self._getOrCreateDomain('toil-registry')
-        for attempt in retry_sdb():
-            with attempt:
-                attributes = self.registry_domain.get_attributes(item_name=namePrefix,
-                                                                 attribute_name='exists',
-                                                                 consistent_read=True)
-                exists = strict_bool(attributes.get('exists', str(False)))
-                self._checkJobStoreCreation(create, exists, region + ":" + namePrefix)
+        self.db = self._connectSimpleDB(region)
+        self.s3 = self._connectS3(region)
+        self.updateRegistry(exists=True)
 
-        def qualify(name):
-            assert len(name) <= self.maxNameLen
-            return self.namePrefix + self.nameSeparator + name
-
-        self.jobsDomain = self._getOrCreateDomain(qualify('jobs'))
-        self.filesDomain = self._getOrCreateDomain(qualify('files'))
-        self.filesBucket = self._getOrCreateBucket(qualify('files'), versioning=True)
-
-        # Now register this job store
-        for attempt in retry_sdb():
-            with attempt:
-                self.registry_domain.put_attributes(item_name=namePrefix,
-                                                    attributes=dict(exists='True'))
-
-        super(AWSJobStore, self).__init__(config=config)
-
-        self.sseKeyPath = self.config.sseKey
+        super(AWSJobStore, self).__init__()
 
     def create(self, command, memory, cores, disk, preemptable, predecessorNumber=0):
         jobStoreID = self._newJobID()
@@ -334,7 +380,6 @@ class AWSJobStore(AbstractJobStore):
     def _supportsUrl(cls, url, export=False):
         return url.scheme.lower() == 's3'
 
-
     def writeFile(self, localFilePath, jobStoreID=None):
         info = self.FileInfo.create(jobStoreID)
         info.upload(localFilePath)
@@ -453,48 +498,96 @@ class AWSJobStore(AbstractJobStore):
         assert self._validateSharedFileName(sharedFileName)
         return self.getPublicUrl(self._sharedFileID(sharedFileName))
 
-    def _connectSimpleDB(self):
+    @classmethod
+    def _qualify(cls, namePrefix, name):
+        assert len(name) <= cls.maxNameLen
+        return namePrefix + cls.nameSeparator + name
+
+    def updateRegistry(self, exists):
+        registry_domain = self._getOrCreateDomain('toil-registry', self.region)
+
+        for attempt in retry_sdb():
+            with attempt:
+                registry_domain.put_attributes(item_name=self.namePrefix,
+                                               attributes=dict(exists=str(exists)))
+
+    @classmethod
+    def checkRegistry(cls, region, namePrefix):
+        registry_domain = cls._getOrCreateDomain('toil-registry', region)
+        for attempt in retry_sdb():
+            with attempt:
+                attributes = registry_domain.get_attributes(item_name=namePrefix,
+                                                            attribute_name='exists',
+                                                            consistent_read=True)
+                return strict_bool(attributes.get('exists', str(False)))
+
+    @staticmethod
+    def _connectSimpleDB(region):
         """
         :rtype: SDBConnection
         """
-        db = boto.sdb.connect_to_region(self.region)
+        db = boto.sdb.connect_to_region(region)
         if db is None:
             raise ValueError("Could not connect to SimpleDB. Make sure '%s' is a valid SimpleDB "
-                             "region." % self.region)
+                             "region." % region)
         assert db is not None
         monkeyPatchSdbConnection(db)
         return db
 
-    def _connectS3(self):
+    @staticmethod
+    def _connectS3(region):
         """
         :rtype: S3Connection
         """
-        s3 = boto.s3.connect_to_region(self.region)
+        s3 = boto.s3.connect_to_region(region)
         if s3 is None:
             raise ValueError("Could not connect to S3. Make sure '%s' is a valid S3 region." %
-                             self.region)
+                             region)
         return s3
 
-    def _getOrCreateBucket(self, bucket_name, versioning=False):
+    @classmethod
+    def _getOrCreateBucket(cls, bucket_name, region, versioning=False):
         """
         :rtype: Bucket
         """
-        assert self.minBucketNameLen <= len(bucket_name) <= self.maxBucketNameLen
-        assert self.bucketNameRe.match(bucket_name)
         try:
-            bucket = self.s3.get_bucket(bucket_name, validate=True)
-            assert versioning is self.__getBucketVersioning(bucket)
-            return bucket
+            return cls._loadBucket(bucket_name, region, versioning=versioning)
         except S3ResponseError as e:
             if e.error_code == 'NoSuchBucket':
-                bucket = self.s3.create_bucket(bucket_name, location=self.region)
-                if versioning:
-                    bucket.configure_versioning(versioning)
-                return bucket
+                return cls._createBucket(bucket_name, region, versioning=versioning)
             else:
                 raise
 
-    def _getOrCreateDomain(self, domain_name):
+    @classmethod
+    def _loadBucket(cls, bucket_name, region, versioning=False):
+        assert cls.minBucketNameLen <= len(bucket_name) <= cls.maxBucketNameLen
+        assert cls.bucketNameRe.match(bucket_name)
+
+        s3 = cls._connectS3(region)
+        bucket = s3.get_bucket(bucket_name, validate=True)
+        assert versioning is cls.__getBucketVersioning(bucket)
+        return bucket
+
+    @classmethod
+    def _createBucket(cls, bucket_name, region, versioning=False):
+        bucket = cls._connectS3(region).create_bucket(bucket_name, location=region)
+        if versioning:
+            bucket.configure_versioning(versioning)
+        return bucket
+
+    @classmethod
+    def _loadDomain(cls, domain_name, region):
+        return cls._connectSimpleDB(region).get_domain(domain_name)
+
+    @classmethod
+    def _createDomain(cls, domain_name, region):
+        db = cls._connectSimpleDB(region)
+        for attempt in retry_sdb(retry_while=sdb_unavailable):
+            with attempt:
+                return db.create_domain(domain_name)
+
+    @classmethod
+    def _getOrCreateDomain(cls, domain_name, region):
         """
         Return the boto Domain object representing the SDB domain with the given name. If the
         domain does not exist it will be created.
@@ -504,12 +597,10 @@ class AWSJobStore(AbstractJobStore):
         :rtype : Domain
         """
         try:
-            return self.db.get_domain(domain_name)
+            return cls._loadDomain(domain_name, region)
         except SDBResponseError as e:
             if no_such_domain(e):
-                for attempt in retry_sdb(retry_while=sdb_unavailable):
-                    with attempt:
-                        return self.db.create_domain(domain_name)
+                return cls._createDomain(domain_name, region)
             else:
                 raise
 
@@ -984,7 +1075,8 @@ class AWSJobStore(AbstractJobStore):
 
     versionings = dict(Enabled=True, Disabled=False, Suspended=None)
 
-    def __getBucketVersioning(self, bucket):
+    @classmethod
+    def __getBucketVersioning(cls, bucket):
         """
         A valueable lesson in how to botch a simple tri-state boolean.
 
@@ -998,10 +1090,11 @@ class AWSJobStore(AbstractJobStore):
         get_versioning_status to then return 'Suspended' for some reason.
         """
         status = bucket.get_versioning_status()
-        return bool(status) and self.versionings[status['Versioning']]
+        return bool(status) and cls.versionings[status['Versioning']]
 
+    #TODO: refactor this to use cleanJobStore
     def deleteJobStore(self):
-        self.registry_domain.put_attributes(self.namePrefix, dict(exists=str(False)))
+        self.updateRegistry(exists=False)
         if self.filesBucket is not None:
             for upload in self.filesBucket.list_multipart_uploads():
                 upload.cancel_upload()

@@ -554,6 +554,7 @@ class Toil(object):
         finally:
             self._shutdownBatchSystem()
 
+    #TODO: fix this guy here
     @staticmethod
     def loadOrCreateJobStore(jobStoreString, config=None):
         """
