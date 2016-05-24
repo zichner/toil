@@ -116,13 +116,6 @@ class AWSJobStore(AbstractJobStore):
         return region, namePrefix
 
     @classmethod
-    def loadOrCreateJobStore(cls, jobStoreStr, config=None, **kwargs):
-        if config is None:
-            return cls.loadJobStore(jobStoreStr, **kwargs)
-        else:
-            return cls.createJobStore(jobStoreStr, config, **kwargs)
-
-    @classmethod
     def createJobStore(cls, jobStoreStr, config, **kwargs):
         region, namePrefix = cls._parseJobStoreString(jobStoreStr)
 

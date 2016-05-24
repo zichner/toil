@@ -37,30 +37,60 @@ class FileJobStore(AbstractJobStore):
     AbstractJobStore.
     """
 
-    def __init__(self, jobStoreDir, config=None):
+    @classmethod
+    def _parseJobStoreString(cls, jobStoreStr):
+        jobStoreDir = absSymPath(jobStoreStr)
+        tempFilesDir = os.path.join(jobStoreDir, "tmp")
+        return jobStoreDir, tempFilesDir
+
+    @classmethod
+    def createJobStore(cls, jobStoreStr, config, **kwargs):
+        jobStoreDir, tempFilesDir = cls._parseJobStoreString(jobStoreStr)
+        cls._checkJobStoreCreation(create=True,
+                                   exists=os.path.exists(jobStoreDir),
+                                   jobStoreString=jobStoreDir)
+        os.mkdir(jobStoreDir)
+        os.mkdir(tempFilesDir)
+
+        jobStore = cls(jobStoreDir, tempFilesDir, config=config)
+        super(cls, jobStore).createJobStore(jobStore, config)
+        return jobStore
+
+    @classmethod
+    def loadJobStore(cls, jobStoreStr, **kwargs):
+        jobStoreDir, tempFilesDir = cls._parseJobStoreString(jobStoreStr)
+        cls._checkJobStoreCreation(create=False,
+                                   exists=os.path.exists(jobStoreDir),
+                                   jobStoreString=jobStoreDir)
+
+        jobStore = cls(jobStoreDir, tempFilesDir)
+        super(cls, jobStore).loadJobStore(jobStore)
+        return jobStore
+
+    @classmethod
+    def cleanJobStore(cls, jobStoreStr):
+        jobStoreDir, _ = cls._parseJobStoreString(jobStoreStr)
+        try:
+            shutil.rmtree(jobStoreDir)
+        except OSError:
+            pass
+
+    def __init__(self, jobStoreDir, tempFilesDir, config=None):
         """
         :param jobStoreDir: Place to create jobStore
         :param config: See jobStores.abstractJobStore.AbstractJobStore.__init__
         :raise RuntimeError: if config != None and the jobStore already exists or
         config == None and the jobStore does not already exists. 
         """
-        # This is root directory in which everything in the store is kept
-        self.jobStoreDir = absSymPath(jobStoreDir)
+        self.jobStoreDir = jobStoreDir
         logger.info("Jobstore directory is: %s", self.jobStoreDir)
-        # Safety checks for existing jobStore
-        self._checkJobStoreCreation(create=config is not None,
-                                    exists=os.path.exists(self.jobStoreDir),
-                                    jobStoreString=self.jobStoreDir)
-        # Directory where temporary files go
-        self.tempFilesDir = os.path.join(self.jobStoreDir, "tmp")
-        # Creation of jobStore, if necessary
-        if config is not None:
-            os.mkdir(self.jobStoreDir)
-            os.mkdir(self.tempFilesDir)
+        self.tempFilesDir = tempFilesDir
+
         # Parameters for creating temporary files
         self.validDirs = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
         self.levels = 2
-        super(FileJobStore, self).__init__(config=config)
+
+        super(FileJobStore, self).__init__()
 
     def deleteJobStore(self):
         if os.path.exists(self.jobStoreDir):

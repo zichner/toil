@@ -143,6 +143,13 @@ class AbstractJobStore(object):
         instance.__config = config
         instance.writeConfigToStore()
 
+    @classmethod
+    def loadOrCreateJobStore(cls, jobStoreStr, config=None, **kwargs):
+        if config is None:
+            return cls.loadJobStore(jobStoreStr, **kwargs)
+        else:
+            return cls.createJobStore(jobStoreStr, config, **kwargs)
+
     def writeConfigToStore(self):
         """
         Re-writes the config attribute to the job store, so that its values can be retrieved
