@@ -551,6 +551,7 @@ class AWSJobStore(AbstractJobStore):
             else:
                 raise
 
+    #TODO: clear up naming for this... and possibly move it to another place
     @classmethod
     def _loadBucket(cls, bucket_name, region, versioning=False):
         assert cls.minBucketNameLen <= len(bucket_name) <= cls.maxBucketNameLen
