@@ -554,7 +554,6 @@ class Toil(object):
         finally:
             self._shutdownBatchSystem()
 
-    #TODO: fix this guy here
     @staticmethod
     def loadOrCreateJobStore(jobStoreString, config=None):
         """
@@ -588,8 +587,7 @@ class Toil(object):
 
         elif jobStoreName == 'azure':
             from toil.jobStores.azureJobStore import AzureJobStore
-            account, namePrefix = jobStoreArgs.split(':', 1)
-            return AzureJobStore(account, namePrefix, config=config)
+            return AzureJobStore.loadOrCreateJobStore(jobStoreString, config=config)
         
         elif jobStoreName == 'google':
             from toil.jobStores.googleJobStore import GoogleJobStore

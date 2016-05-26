@@ -145,7 +145,7 @@ class AWSJobStore(AbstractJobStore):
                        jobsDomain=cls._createDomain(cls._qualify(prefix, 'jobs'), region),
                        config=config, **kwargs)
 
-        super(cls, jobStore).createJobStore(jobStore, config)
+        super(cls, jobStore).createJobStore(config)
         jobStore.sseKeyPath = jobStore.config.sseKey
         return jobStore
 
@@ -161,15 +161,14 @@ class AWSJobStore(AbstractJobStore):
                        jobsDomain=cls._getDomain(cls._qualify(prefix, 'jobs'), region),
                        config=None, **kwargs)
 
-        super(cls, jobStore).loadJobStore(jobStore)
+        super(cls, jobStore).loadJobStore()
         jobStore.sseKeyPath = jobStore.config.sseKey
         return jobStore
 
     @classmethod
     def cleanJobStore(cls, jobStoreStr, **kwargs):
         region, namePrefix = cls._parseJobStoreString(jobStoreStr)
-        jobStore = cls(region, namePrefix, None, None, None, config=None, **kwargs)
-        jobStore.updateRegistry(region, namePrefix, exists=False)
+        cls.updateRegistry(region, namePrefix, exists=False)
 
         for domainName in ('jobs', 'files'):
             try:
@@ -213,11 +212,10 @@ class AWSJobStore(AbstractJobStore):
         log.debug("Instantiating %s for region %s and name prefix '%s'", self.__class__, region, namePrefix)
         self.region = region
         self.namePrefix = namePrefix
-
+        self.partSize = partSize
         self.filesBucket = filesBucket
         self.filesDomain = filesDomain
         self.jobsDomain = jobsDomain
-        self.partSize = partSize
 
         self.db = self._connectSimpleDB(region)
         self.s3 = self._connectS3(region)
@@ -550,7 +548,6 @@ class AWSJobStore(AbstractJobStore):
             else:
                 raise
 
-    #TODO: clear up naming for this... and possibly move it to another place
     @classmethod
     def _getBucket(cls, bucket_name, region, versioning=False):
         assert cls.minBucketNameLen <= len(bucket_name) <= cls.maxBucketNameLen
@@ -1087,7 +1084,7 @@ class AWSJobStore(AbstractJobStore):
 
     #TODO: refactor this to use cleanJobStore
     def deleteJobStore(self):
-        self.updateRegistry(exists=False)
+        self.updateRegistry(self.region, self.namePrefix, exists=False)
         if self.filesBucket is not None:
             for upload in self.filesBucket.list_multipart_uploads():
                 upload.cancel_upload()

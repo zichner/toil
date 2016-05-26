@@ -116,6 +116,10 @@ class AzureJobStore(AbstractJobStore):
         accountKey = _fetchAzureAccountKey(account)
         return account, accountKey, namePrefix
 
+    @classmethod
+    def _qualify(cls, name, namePrefix):
+        return namePrefix + cls.nameSeparator + name
+
     # Dots in container names should be avoided because container names are used in HTTPS bucket
     # URLs where the may interfere with the certificate common name. We use a double
     # underscore as a separator instead.
@@ -128,70 +132,66 @@ class AzureJobStore(AbstractJobStore):
     maxNameLen = 10
     nameSeparator = 'xx'  # Table names must be alphanumeric
 
+    # Length of a jobID - used to test if a stats file has been read already or not
+    jobIDLength = len(str(uuid.uuid4()))
+
     # TODO: remove jobStore suffix
     @classmethod
     def createJobStore(cls, jobStoreStr, config, **kwargs):
-        account, accountKey, namePrefix = cls._parseJobStoreString(jobStoreStr)
+        account, accountKey, prefix = cls._parseJobStoreString(jobStoreStr)
+
         tableService = TableService(account_key=accountKey, account_name=account)
         blobService = BlobService(account_key=accountKey, account_name=account)
+        cls._checkJobStoreCreation(create=True, exists=cls.checkRegistry(tableService, prefix),
+                                   jobStoreString=jobStoreStr)
 
-        cls._checkJobStoreCreation(create=True, exists=cls.checkRegistry(tableService, namePrefix),
-                                   jobStoreString=account + ":" + namePrefix)
+        jobStore = cls(accountName=account, accountKey=accountKey, namePrefix=prefix,
+                       tableService=tableService, blobService=blobService,
+                       jobItems=cls._createTable(tableService, cls._qualify('jobs', prefix)),
+                       jobFileIDs=cls._createTable(tableService, cls._qualify('jobFileIDs', prefix)),
+                       files=cls._createBlobContainer(blobService, cls._qualify('files', prefix)),
+                       statsFiles=cls._createBlobContainer(blobService, cls._qualify('statsfiles', prefix)),
+                       statsFileIDs=cls._createTable(tableService, cls._qualify('statsFileIDs', prefix)),
+                       config=config, **kwargs)
 
-        jobItems = cls._createTable(tableService, cls._qualify('jobs', namePrefix))
-        jobFileIDs = cls._createTable(tableService, cls._qualify('jobFileIDs', namePrefix))
-        files = cls._createBlobContainer(blobService, cls._qualify('files', namePrefix))
-        statsFiles = cls._createBlobContainer(blobService, cls._qualify('statsfiles', namePrefix))
-        statsFileIDs = cls._getOrCreateTable(tableService, cls._qualify('statsFileIDs', namePrefix))
-
-        jobStore = cls(account, accountKey, namePrefix, tableService, blobService, jobItems, jobFileIDs,
-                       files, statsFiles, statsFileIDs, config=config, **kwargs)
-
-        #TODO: see if you can change the super method to an intance method and just call it on jobStore
-        super(cls, jobStore).createJobStore(jobStore, config)
-
+        super(cls, jobStore).createJobStore(config)
         if jobStore.config.cseKey is not None:
             jobStore.keyPath = jobStore.config.cseKey
         return jobStore
 
     @classmethod
     def loadJobStore(cls, jobStoreStr, **kwargs):
-        account, accountKey, namePrefix = cls._parseJobStoreString(jobStoreStr)
+        account, accountKey, prefix = cls._parseJobStoreString(jobStoreStr)
+
         tableService = TableService(account_key=accountKey, account_name=account)
         blobService = BlobService(account_key=accountKey, account_name=account)
+        cls._checkJobStoreCreation(create=False, exists=cls.checkRegistry(tableService, prefix),
+                                   jobStoreString=jobStoreStr)
 
-        cls._checkJobStoreCreation(create=False, exists=cls.checkRegistry(tableService, namePrefix),
-                                   jobStoreString=account + ":" + namePrefix)
+        jobStore = cls(accountName=account, accountKey=accountKey, namePrefix=prefix,
+                       tableService=tableService, blobService=blobService,
+                       jobItems=cls._getTable(tableService, cls._qualify('jobs', prefix)),
+                       jobFileIDs=cls._getTable(tableService, cls._qualify('jobFileIDs', prefix)),
+                       files=cls._getBlobContainer(blobService, cls._qualify('files', prefix)),
+                       statsFiles=cls._getBlobContainer(blobService, cls._qualify('statsfiles', prefix)),
+                       statsFileIDs=cls._getTable(tableService, cls._qualify('statsFileIDs', prefix)),
+                       config=None, **kwargs)
 
-        jobItems = cls._getTable(tableService, cls._qualify('jobs', namePrefix))
-        jobFileIDs = cls._getTable(tableService, cls._qualify('jobFileIDs', namePrefix))
-        files = cls._getBlobContainer(blobService, cls._qualify('files', namePrefix))
-        statsFiles = cls._getBlobContainer(blobService, cls._qualify('statsfiles', namePrefix))
-        statsFileIDs = cls._getTable(tableService, cls._qualify('statsFileIDs', namePrefix))
-
-        jobStore = cls(account, accountKey, namePrefix, tableService, blobService, jobItems, jobFileIDs,
-                       files, statsFiles, statsFileIDs, config=None, **kwargs)
-
-        #TODO: see if you can change the super method to an intance method and just call it on jobStore
-
-        super(cls, jobStore).loadJobStore(jobStore)
-
+        super(cls, jobStore).loadJobStore()
         if jobStore.config.cseKey is not None:
             jobStore.keyPath = jobStore.config.cseKey
         return jobStore
 
     @classmethod
     def cleanJobStore(cls, jobStoreStr, **kwargs):
-        account, accountKey, namePrefix = cls._parseJobStoreString(jobStoreStr)
+        account, accountKey, prefix = cls._parseJobStoreString(jobStoreStr)
         tableService = TableService(account_key=accountKey, account_name=account)
         blobService = BlobService(account_key=accountKey, account_name=account)
-        jobStore = cls(account, accountKey, namePrefix, tableService, blobService,
-                       None, None, None, None, None, None)
-        jobStore.updateRegistry(False)
+        cls.updateRegistry(prefix, tableService, False)
 
         for tableName in ('jobs', 'jobFileIDs', 'statsFileIDs'):
             try:       # TODO: Make sure these exceptions match up with what is raised
-                table = cls._getTable(tableService, cls._qualify(tableName, namePrefix))
+                table = cls._getTable(tableService, cls._qualify(tableName, prefix))
             except RuntimeError:
                 pass
             else:
@@ -199,34 +199,16 @@ class AzureJobStore(AbstractJobStore):
 
         for containerName in ('files', 'statsfiles'):
             try:
-                container = cls._getBlobContainer(blobService, cls._qualify(containerName, namePrefix))
+                container = cls._getBlobContainer(blobService, cls._qualify(containerName, prefix))
             except RuntimeError:
                 pass
             else:
                 container.delete_container()
 
-    def updateRegistry(self, exists):
-        registryTable = self._getOrCreateTable(self.tableService, 'toilRegistry')
-        if exists:
-            for attempt in retry_on_error():
-                with attempt:
-                    registryTable.insert_or_replace_entity(row_key=self.namePrefix,
-                                                           entity={'exists': True})
-        else:
-            registryTable.delete_entity(row_key=self.namePrefix)
-
-    @classmethod
-    def checkRegistry(cls, tableService, namePrefix):
-        registryTable = cls._getOrCreateTable(tableService, 'toilRegistry')
-        for attempt in retry_on_error():
-            with attempt:
-                return registryTable.get_entity(row_key=namePrefix)
-
     # Do not invoke the constructor, use the factory method above.
 
-    def __init__(self, accountName, accountKey, namePrefix, tableService, blobService, jobItemsTable,
-                 jobFileIDTable, filesContainer, statsFilesContainer, statsFileTable, config=None,
-                 jobChunkSize=maxAzureTablePropertySize):
+    def __init__(self, accountName, accountKey, namePrefix, tableService, blobService, jobItems, jobFileIDs, files,
+                 statsFiles, statsFileIDs, config=None, jobChunkSize=maxAzureTablePropertySize):
 
         self.jobChunkSize = jobChunkSize
         self.keyPath = None
@@ -241,21 +223,32 @@ class AzureJobStore(AbstractJobStore):
 
         # Register our job-store in the global table for this storage account
 
-        self.jobItems = jobItemsTable   # Serialized jobs table
-        self.jobFileIDs = jobFileIDTable  # Job<->file mapping table
-        self.files = filesContainer  # Container for all shared and unshared files
-        self.statsFiles = statsFilesContainer  # Stats and logging strings
-        self.statsFileIDs = statsFileTable  # File IDs that contain stats and logging strings
+        self.jobItems = jobItems   # Serialized jobs table
+        self.jobFileIDs = jobFileIDs  # Job<->file mapping table
+        self.files = files  # Container for all shared and unshared files
+        self.statsFiles = statsFiles  # Stats and logging strings
+        self.statsFileIDs = statsFileIDs  # File IDs that contain stats and logging strings
 
-        self.updateRegistry(exists=True)
+        self.updateRegistry(namePrefix, tableService, exists=True)
         super(AzureJobStore, self).__init__()
 
-    # Length of a jobID - used to test if a stats file has been read already or not
-    jobIDLength = len(str(uuid.uuid4()))
+    @classmethod
+    def updateRegistry(cls, namePrefix, tableService, exists):
+        registryTable = cls._getOrCreateTable(tableService, 'toilRegistry')
+        if exists:
+            for attempt in retry_on_error():
+                with attempt:
+                    registryTable.insert_or_replace_entity(row_key=namePrefix,
+                                                           entity={'exists': True})
+        else:
+            registryTable.delete_entity(row_key=namePrefix)
 
     @classmethod
-    def _qualify(cls, name, namePrefix):
-        return namePrefix + cls.nameSeparator + name
+    def checkRegistry(cls, tableService, namePrefix):
+        registryTable = cls._getOrCreateTable(tableService, 'toilRegistry')
+        for attempt in retry_on_error():
+            with attempt:
+                return registryTable.get_entity(row_key=namePrefix)
 
     def jobs(self):
         
@@ -312,7 +305,7 @@ class AzureJobStore(AbstractJobStore):
             self.deleteFile(jobStoreFileID)
 
     def deleteJobStore(self):
-        self.updateRegistry(False)
+        self.updateRegistry(self.namePrefix, self.tableService, False)
         self.jobItems.delete_table()
         self.jobFileIDs.delete_table()
         self.files.delete_container()
@@ -533,14 +526,6 @@ class AzureJobStore(AbstractJobStore):
                 tableService.create_table(tableName)
         return AzureTable(tableService, tableName)
 
-    #TODO: improve the fuck out of these functions
-    @classmethod
-    def _createTable(cls, tableService, name):
-        for attempt in retry_on_error():
-            with attempt:
-                tableService.create_table(name, fail_on_exist=True)
-        return AzureTable(tableService, name)
-
     @classmethod
     def _getTable(cls, tableService, name):
         try:
@@ -554,25 +539,37 @@ class AzureJobStore(AbstractJobStore):
             tableService.delete_table(name)
             raise RuntimeError("Table '%s' does not exist" % name)
 
+    @classmethod
+    def _createTable(cls, tableService, name):
+        for attempt in retry_on_error():
+            with attempt:
+                tableService.create_table(name, fail_on_exist=True)
+        return AzureTable(tableService, name)
+
     def _getOrCreateBlobContainer(self, containerName):
         for attempt in retry_on_error():
             with attempt:
                 self.blobService.create_container(containerName)
         return AzureBlobContainer(self.blobService, containerName)
 
-    #TODO: implement
     @classmethod
     def _getBlobContainer(cls, blobService, name):
-        for attempt in retry_on_error():
-            with attempt:
-                blobService.create_container(name)
-        return AzureBlobContainer(blobService, name)
+        try:
+            cls._createBlobContainer(blobService, name)
+        except:
+            for attempt in retry_on_error():
+                with attempt:
+                    blobService.create_container(name, fail_on_exist=False)
+            return AzureBlobContainer(blobService, name)
+        else:
+            blobService.delete_container(name)
+            raise RuntimeError("Container '%s' does not exist" % name)
 
     @classmethod
     def _createBlobContainer(cls, blobService, name):
         for attempt in retry_on_error():
             with attempt:
-                blobService.create_container(name)
+                blobService.create_container(name, fail_on_exist=True)
         return AzureBlobContainer(blobService, name)
 
     # Maximum bytes that can be in any block of an Azure block blob

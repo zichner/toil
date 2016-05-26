@@ -53,7 +53,7 @@ class FileJobStore(AbstractJobStore):
         os.mkdir(tempFilesDir)
 
         jobStore = cls(jobStoreDir, tempFilesDir, config=config)
-        super(cls, jobStore).createJobStore(jobStore, config)
+        super(cls, jobStore).createJobStore(config)
         return jobStore
 
     @classmethod
@@ -64,7 +64,7 @@ class FileJobStore(AbstractJobStore):
                                    jobStoreString=jobStoreDir)
 
         jobStore = cls(jobStoreDir, tempFilesDir)
-        super(cls, jobStore).loadJobStore(jobStore)
+        super(cls, jobStore).loadJobStore()
         return jobStore
 
     @classmethod

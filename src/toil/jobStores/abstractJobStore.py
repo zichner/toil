@@ -131,17 +131,15 @@ class AbstractJobStore(object):
     """
     __metaclass__ = ABCMeta
 
-    @classmethod
-    def loadJobStore(cls, instance):
-        instance.readConfigFromStore()
+    def loadJobStore(self):
+        self.readConfigFromStore()
 
-    @classmethod
-    def createJobStore(cls, instance, config):
+    def createJobStore(self, config):
         assert config.workflowID is None
         config.workflowID = str(uuid4())
         logger.info("The workflow ID is: '%s'" % config.workflowID)
-        instance.__config = config
-        instance.writeConfigToStore()
+        self.__config = config
+        self.writeConfigToStore()
 
     @classmethod
     def loadOrCreateJobStore(cls, jobStoreStr, config=None, **kwargs):
