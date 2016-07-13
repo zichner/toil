@@ -50,7 +50,7 @@ help:
 
 python=python2.7
 pip=pip2.7
-tests=src
+tests=src/toil/test/provisioners/cgcloud/provisionerTest.py::CGCloudProvisionerTest
 extras=
 
 green=\033[0;32m
