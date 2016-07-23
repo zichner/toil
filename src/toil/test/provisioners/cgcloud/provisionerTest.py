@@ -64,9 +64,9 @@ class CGCloudProvisionerTest(ToilTest, CgcloudTestCase):
     # tunnel the debug client's connection back to the debug server running in PyCharm.
     #
     if True:
-        debugEggPath = '/Applications/PyCharm 2016.1.app/Contents/debug-eggs/pycharm-debug.egg'
-    else:
         debugEggPath = None
+    else:
+        debugEggPath = '/Applications/PyCharm 2016.1.app/Contents/debug-eggs/pycharm-debug.egg'
 
     # A pip-installable release of toil-scripts or a URL pointing to a source distribution.
     # Typically you would specify a GitHub archive URL of a specific branch, tag or commit. The
